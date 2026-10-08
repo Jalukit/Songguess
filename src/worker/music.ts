@@ -1,4 +1,7 @@
-// ดึงรายชื่อเพลงจาก playlist (Spotify หรือ Deezer) และหา preview 30 วินาทีจาก Deezer
+// ดึงรายชื่อเพลงจาก playlist (Spotify หรือ Deezer) และหา preview 30 วินาที
+// Spotify: อ่านจากหน้า embed สาธารณะก่อน (ไม่ต้องใช้คีย์ และมี preview ของ Spotify มาด้วย)
+//          ถ้าไม่ได้ค่อยใช้ Web API แบบ client credentials (ถ้าตั้งคีย์ไว้)
+// เพลงที่ไม่มี preview จาก Spotify จะไปค้นหาจาก Deezer แทน
 
 import { answerVariants, normalize } from "../shared/match.ts";
 
@@ -8,6 +11,8 @@ export interface Track {
   cover?: string;
   isrc?: string;
   deezerId?: number;
+  spotifyId?: string;
+  spotifyPreview?: string;
 }
 
 export interface Playlist {
@@ -17,7 +22,7 @@ export interface Playlist {
 
 export interface ResolvedTrack extends Track {
   previewUrl: string;
-  altTitle: string; // ชื่อเพลงฝั่ง Deezer ใช้เป็นคำตอบสำรอง
+  altTitle: string; // ชื่อเพลงจากแหล่งที่ได้ preview มา (เช่น Deezer) ใช้เป็นคำตอบสำรอง
 }
 
 export class UserError extends Error {}
@@ -88,6 +93,54 @@ interface SpotifyTrack {
 }
 
 async function loadSpotify(id: string, env: Env): Promise<Playlist> {
+  const embed = await loadSpotifyEmbed(id).catch((err) => {
+    console.warn("spotify embed failed", err);
+    return null;
+  });
+  if (embed?.tracks.length) return embed;
+  if (env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET) return loadSpotifyApi(id, env);
+  throw new UserError("ดึง playlist จาก Spotify ไม่ได้ (ต้องตั้งเป็น public) — ลองใช้ลิงก์ Deezer แทน");
+}
+
+interface EmbedTrack {
+  uri: string;
+  title: string;
+  subtitle: string;
+  entityType?: string;
+  audioPreview?: { url?: string } | null;
+}
+
+/**
+ * อ่านหน้า embed (open.spotify.com/embed/playlist/…) ที่ Spotify ให้เว็บอื่นแปะเครื่องเล่น
+ * ไม่ใช่ API ทางการ ถ้า Spotify เปลี่ยนหน้าตา ส่วนนี้จะพังได้ จึงมี Web API + Deezer เป็นทางสำรอง
+ * ข้อจำกัด: ได้เพลงสูงสุด 100 เพลงแรกของ playlist
+ */
+async function loadSpotifyEmbed(id: string): Promise<Playlist | null> {
+  const res = await fetch(`https://open.spotify.com/embed/playlist/${id}`, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; SongGuess)", "Accept-Language": "en" },
+  });
+  if (!res.ok) return null;
+  const html = await res.text();
+  const json = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)?.[1];
+  if (!json) return null;
+  const entity = JSON.parse(json)?.props?.pageProps?.state?.data?.entity as
+    | { name?: string; title?: string; trackList?: EmbedTrack[] }
+    | undefined;
+  if (!entity?.trackList) return null;
+
+  const tracks: Track[] = entity.trackList
+    .filter((t) => (t.entityType ?? "track") === "track" && t.title)
+    .map((t) => ({
+      title: t.title,
+      artists: t.subtitle.split(/,\s*/).filter(Boolean),
+      spotifyId: t.uri.split(":").pop(),
+      spotifyPreview: t.audioPreview?.url || undefined,
+    }));
+  return { name: entity.name ?? entity.title ?? "Spotify playlist", tracks };
+}
+
+/** Web API แบบ client credentials — ได้ทุกเพลง แต่ไม่มี preview (ต้องไปหาจาก Deezer) */
+async function loadSpotifyApi(id: string, env: Env): Promise<Playlist> {
   const token = await getSpotifyToken(env);
   const get = (path: string) =>
     fetch(`https://api.spotify.com/v1${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -164,6 +217,15 @@ async function loadDeezer(id: string): Promise<Playlist> {
  * คืน null ถ้าหาไม่เจอ ให้ข้ามเพลงนั้นไป
  */
 export async function resolvePreview(track: Track): Promise<ResolvedTrack | null> {
+  if (track.spotifyPreview) {
+    return {
+      ...track,
+      cover: track.cover ?? (await spotifyCover(track.spotifyId)),
+      previewUrl: track.spotifyPreview,
+      altTitle: track.title,
+    };
+  }
+
   const ok = (t: DeezerTrack | null): t is DeezerTrack => !!t && !!t.preview && t.readable !== false;
   const done = (t: DeezerTrack): ResolvedTrack => ({
     ...track,
@@ -211,6 +273,18 @@ export async function resolvePreview(track: Track): Promise<ResolvedTrack | null
     if (best) return done(best);
   }
   return null;
+}
+
+/** ปกอัลบั้มของเพลงจาก oEmbed ของ Spotify (ทางการ ไม่ต้องใช้คีย์) — หาไม่ได้ก็ไม่เป็นไร */
+async function spotifyCover(id: string | undefined): Promise<string | undefined> {
+  if (!id) return;
+  try {
+    const res = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/track/${id}`);
+    if (!res.ok) return;
+    return ((await res.json()) as { thumbnail_url?: string }).thumbnail_url;
+  } catch {
+    return;
+  }
 }
 
 /** ตัดวงเล็บและส่วนหลังขีดออก: `เจ็บที่ยังรู้สึก (เพลงประกอบซีรีส์ "U-Prince")` → `เจ็บที่ยังรู้สึก` */
