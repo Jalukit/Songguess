@@ -3,13 +3,25 @@ import type { ClientMsg, RoomView, ServerMsg } from "../shared/protocol.ts";
 
 export type GuessFeedback = Extract<ServerMsg, { t: "guessResult" }> & { at: number };
 
-/** playerId ต่อแท็บ ต่อห้อง — รีเฟรชหน้าแล้วกลับมาเป็นคนเดิม คะแนนไม่หาย */
+/**
+ * playerId ต่อห้อง เก็บใน localStorage — รีเฟรช/ปิดแท็บแล้วเปิดลิงก์ใหม่ในเบราว์เซอร์เดิม
+ * จะกลับมาเป็นคนเดิม คะแนนไม่หาย (ทดสอบหลายคนบนเครื่องเดียวให้ใช้หน้าต่างไม่ระบุตัวตน/คนละเบราว์เซอร์)
+ */
 export function playerIdFor(code: string): string {
   const key = `sg:player:${code}`;
-  let id = sessionStorage.getItem(key);
+  let id: string | null = null;
+  try {
+    id = localStorage.getItem(key);
+  } catch {
+    // บางเบราว์เซอร์ปิด storage ไว้ ใช้ id ใหม่ไปก่อน
+  }
   if (!id) {
     id = crypto.randomUUID();
-    sessionStorage.setItem(key, id);
+    try {
+      localStorage.setItem(key, id);
+    } catch {
+      // ignore
+    }
   }
   return id;
 }
@@ -64,10 +76,14 @@ export function useRoom(code: string, name: string) {
     };
 
     connect();
+    // ออกจากหน้าห้องภายในแอป (กดปุ่มออก / กดย้อนกลับ) = ออกจากห้อง
+    // ส่วนการรีเฟรชหรือปิดแท็บจะไม่มาถึงตรงนี้ server จึงเก็บที่นั่งไว้ให้สักพัก
     return () => {
       stopped = true;
       clearTimeout(timer);
-      wsRef.current?.close();
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "leave" } satisfies ClientMsg));
+      ws?.close();
     };
   }, [code, name]);
 

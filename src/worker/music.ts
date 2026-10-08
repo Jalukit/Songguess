@@ -1,6 +1,6 @@
 // ดึงรายชื่อเพลงจาก playlist (Spotify หรือ Deezer) และหา preview 30 วินาทีจาก Deezer
 
-import { normalize } from "../shared/match.ts";
+import { answerVariants, normalize } from "../shared/match.ts";
 
 export interface Track {
   title: string;
@@ -174,7 +174,8 @@ export async function resolvePreview(track: Track): Promise<ResolvedTrack | null
 
   if (track.deezerId) {
     const t = await deezer<DeezerTrack>(`/track/${track.deezerId}`);
-    return ok(t) ? done(t) : null;
+    if (ok(t)) return done(t);
+    // playlist เก่ามักชี้ไปที่ track id ที่ค่ายลบไปแล้ว แต่ยังมีเวอร์ชันใหม่ที่เล่นได้ → ค้นหาด้วยชื่อแทน
   }
 
   if (track.isrc) {
@@ -182,17 +183,47 @@ export async function resolvePreview(track: Track): Promise<ResolvedTrack | null
     if (ok(t)) return done(t);
   }
 
-  const artist = track.artists[0] ?? "";
-  const queries = [`artist:"${artist}" track:"${track.title}"`, `${track.title} ${artist}`];
-  const wantTitle = normalize(track.title);
-  const wantArtist = normalize(artist);
+  // ชื่อศิลปินบางทีเป็น "bodyslam,Potato,ดา เอ็นโดรฟิน" รวมกันมา
+  const artists = track.artists.flatMap((a) => a.split(/\s*[,&]\s*/)).filter(Boolean);
+  const artist = artists[0] ?? "";
+  const title = baseTitle(track.title);
+  const wantTitles = new Set(titleKeys(track.title));
+  const wantArtists = artists.map(compact).filter(Boolean);
+
+  // "Room39" = "Room 39", "Justin" ≈ "Justin Mari"
+  const artistMatches = (t: DeezerTrack) => {
+    const got = compact(t.artist.name);
+    return wantArtists.some((a) => got === a || got.includes(a) || a.includes(got));
+  };
+  // "Alright" = "มันเป็นใคร (Alright)", "I'm Sorry สีดา" = "I'm Sorry (สีดา)"
+  const titleMatches = (t: DeezerTrack) => titleKeys(t.title).some((k) => wantTitles.has(k));
+
+  // ชื่อหลักแบบสั้น เช่น "ความจริง-Truth" → "ความจริง" ใช้ค้นเมื่อชื่อเต็มค้นไม่เจอ
+  const [full, ...others] = answerVariants(track.title);
+  const short = others.find((v) => v !== full) ?? title;
+  const queries = [
+    ...new Set([`artist:"${artist}" track:"${title}"`, `${title} ${artist}`, `${short} ${artist}`, title]),
+  ];
   for (const q of queries) {
-    const res = await deezer<{ data: DeezerTrack[] }>(`/search?q=${encodeURIComponent(q)}&limit=10`);
+    const res = await deezer<{ data: DeezerTrack[] }>(`/search?q=${encodeURIComponent(q)}&limit=15`);
     const candidates = (res?.data ?? []).filter(ok);
-    const best =
-      candidates.find((t) => normalize(t.artist.name) === wantArtist && normalize(t.title).startsWith(wantTitle)) ??
-      candidates.find((t) => normalize(t.artist.name) === wantArtist);
+    const best = candidates.find((t) => artistMatches(t) && titleMatches(t));
     if (best) return done(best);
   }
   return null;
+}
+
+/** ตัดวงเล็บและส่วนหลังขีดออก: `เจ็บที่ยังรู้สึก (เพลงประกอบซีรีส์ "U-Prince")` → `เจ็บที่ยังรู้สึก` */
+function baseTitle(title: string): string {
+  const t = title.replace(/\([^)]*\)|\[[^\]]*\]/g, " ").split(/\s[-–—]\s/)[0].trim();
+  return t || title;
+}
+
+function compact(s: string): string {
+  return normalize(s).replace(/ /g, "");
+}
+
+/** ทุกชื่อที่ใช้เรียกเพลงนี้ได้ (ชื่อเต็ม, ชื่อไม่มีวงเล็บ, ชื่อในวงเล็บ) แบบไม่มีช่องว่าง */
+function titleKeys(title: string): string[] {
+  return answerVariants(title).map((v) => v.replace(/ /g, ""));
 }

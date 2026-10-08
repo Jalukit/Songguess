@@ -83,7 +83,7 @@ function Home(props: {
         <input
           value={props.name}
           maxLength={LIMITS.maxNameLength}
-          placeholder="เช่น ต้น"
+          placeholder="เช่น Paturnix"
           onChange={(e) => props.onName(e.target.value)}
           autoFocus
         />

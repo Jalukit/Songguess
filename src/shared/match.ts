@@ -5,6 +5,19 @@ export type MatchResult = "correct" | "close" | "wrong";
 const VERSION_WORDS =
   /\b(feat|ft|featuring|with|remaster(ed)?|live|version|ver|edit|mix|remix|radio|acoustic|demo|mono|stereo|deluxe|bonus|explicit|clean|instrumental|from|original|soundtrack|ost)\b/i;
 
+/**
+ * ชื่อเพลงสำหรับแสดงเป็นตัวเลือก: ตัด (feat. …) / [Remastered] / - Live Version ออก
+ * ตัวเลือกทุกข้อจะได้หน้าตาเหมือนกัน ไม่มีข้อไหนดูต่างจนเดาได้
+ */
+export function displayTitle(title: string): string {
+  const cleaned = title
+    .replace(/\s*[([][^)\]]*[)\]]/g, (m) => (VERSION_WORDS.test(m) ? "" : m))
+    .replace(/\s[-–—]\s.*$/, (m) => (VERSION_WORDS.test(m) || /\d{4}/.test(m) ? "" : m))
+    .replace(/\s(feat\.?|ft\.?|featuring)\s.*$/i, "")
+    .trim();
+  return cleaned || title;
+}
+
 /** แปลงข้อความให้อยู่ในรูปมาตรฐานสำหรับเทียบกัน (ยังเก็บสระ/วรรณยุกต์ไทยไว้) */
 export function normalize(text: string): string {
   return text
@@ -37,6 +50,13 @@ export function answerVariants(title: string): string[] {
 
   // ตัด feat. ที่ไม่ได้อยู่ในวงเล็บ: "Song feat. X" -> "Song"
   add(beforeDash.replace(/\s(feat\.?|ft\.?|featuring)\s.*$/i, ""));
+
+  // ชื่อไทย-อังกฤษคั่นด้วยขีดติดกัน: "ความจริง-Truth" -> "ความจริง", "truth" (แต่ไม่แยก "U-Prince")
+  const dual = beforeDash.match(/^([^-]+)-([^-]+)$/);
+  if (dual && /\p{Script=Thai}/u.test(dual[1]) !== /\p{Script=Thai}/u.test(dual[2])) {
+    add(dual[1]);
+    add(dual[2]);
+  }
 
   // ชื่อในวงเล็บที่ไม่ใช่คำบอกเวอร์ชัน มักเป็นชื่ออีกภาษา: "ดาว (Star)" -> "star"
   for (const m of title.matchAll(/\(([^)]*)\)|\[([^\]]*)\]/g)) {

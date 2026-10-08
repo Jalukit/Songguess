@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { audio, getVolume, setVolume } from "./audio.ts";
 import { navigate } from "./nav.ts";
 import { useRoom, useTicker, type GuessFeedback } from "./useRoom.ts";
-import type { ClientMsg, PlayerView, RoomView } from "../shared/protocol.ts";
+import type { AnswerMode, ClientMsg, PlayerView, RoomView } from "../shared/protocol.ts";
 
 type Send = (msg: ClientMsg) => void;
 
 export function RoomPage({ code, name }: { code: string; name: string }) {
   const { room, you, error, fatal, connected, feedback, send, serverNow } = useRoom(code, name);
 
+  // การส่ง leave อยู่ใน cleanup ของ useRoom (ทำงานทั้งตอนกดปุ่มนี้และตอนกดย้อนกลับ)
   const leave = () => {
-    send({ t: "leave" });
     audio.pause();
     navigate("/");
   };
@@ -114,7 +114,7 @@ function Lobby(props: { room: RoomView; isHost: boolean; send: Send; error: stri
         {room.playlist ? (
           <p>
             Playlist: <strong>{room.playlist.name}</strong> ({room.playlist.count} เพลง) · {room.settings.rounds} รอบ ·{" "}
-            {room.settings.seconds} วินาที/รอบ
+            {room.settings.seconds} วินาที/รอบ · {room.settings.mode === "choice" ? "เลือกตอบ 4 ข้อ" : "พิมพ์ชื่อเพลง"}
           </p>
         ) : (
           <p className="muted">ยังไม่ได้เลือก playlist</p>
@@ -174,6 +174,26 @@ function Lobby(props: { room: RoomView; isHost: boolean; send: Send; error: stri
             ))}
           </select>
         </label>
+        <label>
+          วิธีตอบ
+          <select
+            value={room.settings.mode}
+            onChange={(e) => send({ t: "settings", settings: { mode: e.target.value as AnswerMode } })}
+          >
+            <option value="choice">เลือกจาก 4 ตัวเลือก</option>
+            <option value="type">พิมพ์ชื่อเพลง</option>
+          </select>
+        </label>
+        <label>
+          ปกอัลบั้มเบลอ (คำใบ้)
+          <select
+            value={room.settings.blurCover ? "on" : "off"}
+            onChange={(e) => send({ t: "settings", settings: { blurCover: e.target.value === "on" } })}
+          >
+            <option value="on">แสดง</option>
+            <option value="off">ไม่แสดง</option>
+          </select>
+        </label>
       </div>
 
       <button className="primary big" disabled={!room.playlist} onClick={() => send({ t: "start" })}>
@@ -196,6 +216,7 @@ function Game(props: {
   const { room, you, isHost, send, feedback, serverNow } = props;
   const round = room.round;
   const [guess, setGuess] = useState("");
+  const [myChoice, setMyChoice] = useState<number | null>(null);
   const [blocked, setBlocked] = useState(false); // เบราว์เซอร์ไม่ยอมเล่นเสียงอัตโนมัติ
   const inputRef = useRef<HTMLInputElement>(null);
   useTicker(100);
@@ -217,6 +238,7 @@ function Game(props: {
     audio.src = round.previewUrl;
     audio.load();
     setGuess("");
+    setMyChoice(null);
     const wait = round.startsAt - serverNow();
     const t = setTimeout(() => {
       playAt();
@@ -242,6 +264,14 @@ function Game(props: {
   const total = round.endsAt - round.startsAt;
   const left = Math.max(0, round.endsAt - now);
   const youCorrect = round.correct.find((c) => c.id === you);
+  const isChoice = round.options !== null;
+  const reveal = room.phase === "reveal" ? room.reveal : null;
+
+  const choose = (i: number) => {
+    if (myChoice !== null) return;
+    setMyChoice(i);
+    send({ t: "choose", index: i });
+  };
   const showFeedback = feedback && Date.now() - feedback.at < 2500 && feedback.result !== "correct";
 
   return (
@@ -261,10 +291,25 @@ function Game(props: {
 
       {room.phase === "playing" && countdown <= 0 && (
         <>
-          <div className="equalizer" aria-hidden>
-            <i /><i /><i /><i /><i />
-          </div>
-          {youCorrect ? (
+          {round.cover ? (
+            // เบลอมากตอนเริ่ม แล้วค่อย ๆ ชัดขึ้น (แต่ไม่ชัดจนอ่านชื่อบนปกได้จนกว่าจะเฉลย)
+            <div className="cover-hint">
+              <img src={round.cover} alt="" style={{ filter: `blur(${12 + 18 * (left / total)}px)` }} />
+              <Equalizer />
+            </div>
+          ) : (
+            <Equalizer />
+          )}
+          {isChoice ? (
+            <>
+              <Options options={round.options!} myChoice={myChoice} correct={null} onChoose={choose} />
+              {myChoice !== null && (
+                <p className={youCorrect ? "correct" : "muted center"}>
+                  {youCorrect ? `ถูกต้อง! +${youCorrect.points} คะแนน 🎉` : "ตอบแล้ว รอเฉลย…"}
+                </p>
+              )}
+            </>
+          ) : youCorrect ? (
             <p className="correct">ถูกต้อง! +{youCorrect.points} คะแนน 🎉</p>
           ) : (
             <form
@@ -286,7 +331,7 @@ function Game(props: {
               <button>ตอบ</button>
             </form>
           )}
-          {showFeedback && (
+          {showFeedback && !isChoice && (
             <p className={feedback.result === "close" ? "close" : "wrong"}>
               {feedback.result === "close" ? `"${feedback.text}" — เกือบแล้ว!` : `"${feedback.text}" ยังไม่ถูก`}
             </p>
@@ -300,22 +345,65 @@ function Game(props: {
         </>
       )}
 
-      {room.phase === "reveal" && room.reveal && (
-        <div className="reveal">
-          {room.reveal.cover && <img src={room.reveal.cover} alt="" />}
-          <div>
-            <p className="muted">เพลงนี้คือ</p>
-            <h2>{room.reveal.title}</h2>
-            <p>{room.reveal.artists.join(", ")}</p>
+      {reveal && (
+        <>
+          <div className="reveal">
+            {reveal.cover && <img src={reveal.cover} alt="" />}
+            <div>
+              <p className="muted">เพลงนี้คือ</p>
+              <h2>{reveal.title}</h2>
+              <p>{reveal.artists.join(", ")}</p>
+              {isChoice && myChoice !== null && (
+                <p className={myChoice === reveal.correctOption ? "correct" : "wrong"}>
+                  {myChoice === reveal.correctOption ? `คุณตอบถูก +${youCorrect?.points ?? 0}` : "คุณตอบผิด 😢"}
+                </p>
+              )}
             <p className="muted">
               {round.correct.length === 0
                 ? "ไม่มีใครตอบถูก 😅"
                 : `ตอบถูก ${round.correct.length} คน`}
               {room.nextAt && ` · ${round.index < round.total ? "รอบถัดไป" : "สรุปผล"}ใน ${Math.max(0, Math.ceil((room.nextAt - now) / 1000))} วิ`}
             </p>
+            </div>
           </div>
-        </div>
+          {isChoice && <Options options={round.options!} myChoice={myChoice} correct={reveal.correctOption} />}
+        </>
       )}
+    </div>
+  );
+}
+
+function Equalizer() {
+  return (
+    <div className="equalizer" aria-hidden>
+      <i /><i /><i /><i /><i />
+    </div>
+  );
+}
+
+function Options(props: {
+  options: string[];
+  myChoice: number | null;
+  correct: number | null; // รู้เฉพาะตอนเฉลย
+  onChoose?: (i: number) => void;
+}) {
+  const { options, myChoice, correct, onChoose } = props;
+  const locked = myChoice !== null || correct !== null;
+  return (
+    <div className="options">
+      {options.map((o, i) => {
+        const cls = [
+          "option",
+          i === myChoice && "selected",
+          correct !== null && i === correct && "right",
+          correct !== null && i === myChoice && i !== correct && "miss",
+        ];
+        return (
+          <button key={i} className={cls.filter(Boolean).join(" ")} disabled={locked} onClick={() => onChoose?.(i)}>
+            {o}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -352,18 +440,26 @@ function Results({ room, you, isHost, send }: { room: RoomView; you: string; isH
 
 function Scoreboard({ room, you }: { room: RoomView; you: string }) {
   const correct = new Map(room.round?.correct.map((c) => [c.id, c.points]));
+  const hidePoints = room.phase === "playing" && room.round?.options != null;
+  const answered = new Set(room.round?.answered);
+  // คะแนนรวมก็ต้องยังไม่บวกรอบนี้ ไม่งั้นดูออกว่าใครตอบถูก
+  const players = hidePoints
+    ? room.players.map((p) => ({ ...p, score: p.score - (correct.get(p.id) ?? 0) }))
+    : room.players;
   return (
     <aside className="card scoreboard">
       <h3>ผู้เล่น ({room.players.length})</h3>
       <ul>
-        {ranked(room.players).map((p) => (
+        {ranked(players).map((p) => (
           <li key={p.id} className={[p.id === you && "me", !p.connected && "offline"].filter(Boolean).join(" ")}>
             <span className="name">
               {p.id === room.hostId && "👑 "}
               {p.name}
               {p.id === you && " (คุณ)"}
             </span>
-            {correct.has(p.id) && <span className="plus">+{correct.get(p.id)}</span>}
+            {hidePoints
+              ? answered.has(p.id) && <span className="answered">ตอบแล้ว</span>
+              : correct.has(p.id) && <span className="plus">+{correct.get(p.id)}</span>}
             <strong>{p.score}</strong>
           </li>
         ))}

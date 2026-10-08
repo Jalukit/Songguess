@@ -28,3 +28,10 @@ test("เกือบถูก / ผิด", () => {
   assert.equal(checkAnswer("hello", ["Bohemian Rhapsody"]), "wrong");
   assert.equal(checkAnswer("", ["Yellow"]), "wrong");
 });
+
+test("ชื่อไทย-อังกฤษคั่นด้วยขีด", () => {
+  assert.equal(checkAnswer("ความจริง", ["ความจริง-Truth"]), "correct");
+  assert.equal(checkAnswer("truth", ["ความจริง-Truth"]), "correct");
+  assert.equal(checkAnswer("u prince", ["U-Prince"]), "correct");
+  assert.equal(checkAnswer("มันเป็นใคร", ["มันเป็นใคร (Alright)"]), "correct");
+});
