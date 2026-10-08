@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": ["./src/worker/worker-configuration.d.ts"],
+    "tsBuildInfoFile": "node_modules/.tmp/worker.tsbuildinfo"
+  },
+  "include": ["src/worker", "src/shared"],
+  "exclude": ["src/**/*.test.ts"]
+}
