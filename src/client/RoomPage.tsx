@@ -367,8 +367,43 @@ function Game(props: {
             </div>
           </div>
           {isChoice && <Options options={round.options!} myChoice={myChoice} correct={reveal.correctOption} />}
+          <RoundResults room={room} you={you} />
         </>
       )}
+    </div>
+  );
+}
+
+/** ผลของรอบนี้: ใครตอบถูก/ผิด ใช้เวลากี่วินาที ได้กี่คะแนน (ถูกเร็วสุดอยู่บน) */
+function RoundResults({ room, you }: { room: RoomView; you: string }) {
+  const round = room.round!;
+  const correct = new Map(round.correct.map((c) => [c.id, c]));
+  const wrong = new Map(round.wrong.map((w) => [w.id, w]));
+  const rows = room.players
+    .map((p) => {
+      const c = correct.get(p.id);
+      const w = wrong.get(p.id);
+      const status = c ? "correct" : w ? "wrong" : "none";
+      return { p, status, ms: c?.ms ?? w?.ms ?? null, points: c?.points ?? 0 };
+    })
+    .sort((a, b) => {
+      const order = { correct: 0, wrong: 1, none: 2 } as const;
+      return order[a.status as keyof typeof order] - order[b.status as keyof typeof order] || (a.ms ?? 0) - (b.ms ?? 0);
+    });
+
+  return (
+    <div className="round-results">
+      <h3>ผลรอบนี้</h3>
+      <ul>
+        {rows.map(({ p, status, ms, points }, i) => (
+          <li key={p.id} className={[status, p.id === you && "me"].filter(Boolean).join(" ")}>
+            <span className="icon">{status === "correct" ? (i === 0 ? "⚡" : "✅") : status === "wrong" ? "❌" : "—"}</span>
+            <span className="name">{p.name}</span>
+            <span className="time">{ms !== null ? `${(ms / 1000).toFixed(1)} วิ` : "ไม่ได้ตอบ"}</span>
+            <strong className="pts">{points > 0 ? `+${points}` : "0"}</strong>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

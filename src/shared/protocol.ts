@@ -29,7 +29,8 @@ export interface RoundView {
   options: string[] | null; // ตัวเลือก (โหมด choice) — ไม่บอกว่าข้อไหนถูกจนกว่าจะเฉลย
   cover: string | null; // ปกอัลบั้มสำหรับแสดงแบบเบลอ (ถ้าเปิดไว้)
   answered: string[]; // id ของคนที่ตอบแล้ว (โหมด choice)
-  correct: { id: string; points: number }[];
+  correct: { id: string; points: number; ms: number }[]; // ms = ใช้เวลาตอบกี่มิลลิวินาที
+  wrong: { id: string; ms: number }[]; // คนที่เลือกผิด (โหมด choice) — ส่งมาเฉพาะตอนเฉลย
 }
 
 export interface RevealView {

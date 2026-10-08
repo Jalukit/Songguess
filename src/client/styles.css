@@ -177,3 +177,16 @@ header { display: flex; justify-content: space-between; align-items: center; gap
   transform: scale(1.25); /* ซ่อนขอบที่เบลอ */
 }
 .cover-hint .equalizer { position: absolute; inset: auto 0 12px; margin: 0; height: 40px; }
+
+/* ผลรอบนี้ (ตอนเฉลย) */
+.round-results { margin-top: 20px; }
+.round-results h3 { margin: 0 0 8px; font-size: 1rem; color: var(--muted); }
+.round-results ul { list-style: none; padding: 0; margin: 0; }
+.round-results li { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; }
+.round-results li.me { background: var(--panel-2); }
+.round-results li.wrong .name, .round-results li.none .name { color: var(--muted); }
+.round-results .icon { width: 1.4em; text-align: center; }
+.round-results .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.round-results .time { color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.round-results .pts { min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.round-results li.correct .pts { color: var(--good); }

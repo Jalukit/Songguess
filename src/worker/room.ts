@@ -17,7 +17,7 @@ import {
 import { loadPlaylist, resolvePreview, UserError, type ResolvedTrack, type Track } from "./music.ts";
 
 const COUNTDOWN_MS = 2_500; // เวลาให้ทุกเครื่องโหลดเพลงก่อนเริ่มพร้อมกัน
-const REVEAL_MS = 6_000;
+const REVEAL_MS = 8_000;
 const EMPTY_ROOM_TTL_MS = 3 * 60_000; // ห้องว่างนานเท่านี้แล้วลบทิ้ง
 const MAX_SKIPS_PER_ROUND = 8; // หา preview ไม่เจอติดกันกี่เพลงถึงยอมแพ้
 // คนที่หลุด (ปิดแท็บ / เน็ตหลุด) จะค้างในห้องนานเท่านี้เผื่อกลับมา แล้วค่อยลบชื่อออก
@@ -42,7 +42,8 @@ interface State {
   roundIndex: number;
   roundTotal: number;
   current: (ResolvedTrack & { startsAt: number; endsAt: number; options: string[] | null; correctOption: number | null }) | null;
-  correct: { id: string; points: number }[];
+  correct: { id: string; points: number; ms: number }[];
+  wrong: { id: string; ms: number }[];
   answered: string[]; // คนที่ตอบไปแล้ว (โหมด choice ตอบได้ครั้งเดียว)
   reveal: RevealView | null;
   deadline: number | null; // เวลาที่ต้องเปลี่ยน phase ถัดไป
@@ -65,6 +66,7 @@ export class Room extends DurableObject<Env> {
         // state ที่เก็บไว้ก่อนอัปเดตเวอร์ชันอาจไม่มี field ใหม่
         this.state.settings = { ...DEFAULT_SETTINGS, ...this.state.settings };
         this.state.answered ??= [];
+        this.state.wrong ??= [];
       }
     });
   }
@@ -261,6 +263,7 @@ export class Room extends DurableObject<Env> {
       roundTotal: 0,
       current: null,
       correct: [],
+      wrong: [],
       answered: [],
       reveal: null,
       deadline: null,
@@ -307,6 +310,7 @@ export class Room extends DurableObject<Env> {
       correctOption: options?.correct ?? null,
     };
     s.correct = [];
+    s.wrong = [];
     s.answered = [];
     s.phase = "playing";
     s.deadline = s.current.endsAt;
@@ -317,7 +321,7 @@ export class Room extends DurableObject<Env> {
     const cur = s.current!;
     s.phase = "reveal";
     s.reveal = { title: cur.title, artists: cur.artists, cover: cur.cover, correctOption: cur.correctOption };
-    s.deadline = s.roundIndex >= s.roundTotal ? Date.now() + REVEAL_MS / 2 : Date.now() + REVEAL_MS;
+    s.deadline = Date.now() + REVEAL_MS;
   }
 
   private finish() {
@@ -358,6 +362,7 @@ export class Room extends DurableObject<Env> {
       const points = this.award(playerId, now);
       this.send(ws, { t: "guessResult", result: "correct", points, text });
     } else {
+      s.wrong.push({ id: playerId, ms: now - cur.startsAt });
       this.send(ws, { t: "guessResult", result: "wrong", text });
     }
     await this.afterAnswer();
@@ -371,7 +376,7 @@ export class Room extends DurableObject<Env> {
     const points = Math.round(1000 - 700 * elapsed) + (s.correct.length === 0 ? 100 : 0);
     const player = s.players.find((p) => p.id === playerId);
     if (player) player.score += points;
-    s.correct.push({ id: playerId, points });
+    s.correct.push({ id: playerId, points, ms: now - cur.startsAt });
     return points;
   }
 
@@ -424,6 +429,7 @@ export class Room extends DurableObject<Env> {
     player.id = newId;
     if (s.hostId === oldId) s.hostId = newId;
     for (const c of s.correct) if (c.id === oldId) c.id = newId;
+    for (const w of s.wrong) if (w.id === oldId) w.id = newId;
     s.answered = s.answered.map((id) => (id === oldId ? newId : id));
     return player;
   }
@@ -488,6 +494,7 @@ export class Room extends DurableObject<Env> {
             cover: s.settings.blurCover ? (cur.cover ?? null) : null,
             answered: s.answered,
             correct: s.correct,
+            wrong: s.phase === "reveal" ? s.wrong : [],
           }
         : null,
       reveal: s.reveal,
